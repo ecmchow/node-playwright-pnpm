@@ -1,0 +1,251 @@
+name: build
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BUILD_ARCH: "['amd64', 'arm64']"
+  BUILD_OS: "['jammy']"
+  BUILD_NODE_VERSIONS: "[20, 18]"
+  BUILD_PNPM_VERSIONS: "[9, 8]"
+
+jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      src_version: ${{ steps.retrieve-src-version.outputs.release }}
+      current_version: ${{ steps.retrieve-current-version.outputs.release }}
+    steps:
+      - id: retrieve-src-version
+        uses: pozetroninc/github-action-get-latest-release@master
+        with:
+          owner: microsoft
+          repo: playwright
+          excludes: prerelease, draft
+
+      - id: retrieve-current-version
+        uses: pozetroninc/github-action-get-latest-release@master
+        with:
+          owner: ecmchow
+          repo: node-playwright-pnpm
+          excludes: prerelease, draft
+
+  prepare-matrix:
+    name: Prepare Matrix Output
+    runs-on: ubuntu-latest
+    needs: get-version
+    outputs: 
+      matrix-arch: ${{ steps.matrix-arch.outputs.matrix }}
+      matrix-os: ${{ steps.matrix-os.outputs.matrix }}
+      matrix-node: ${{ steps.matrix-node.outputs.matrix }}
+      matrix-pnpm: ${{ steps.matrix-pnpm.outputs.matrix }}
+    steps: 
+      - name: Create Matrix Variable (arch)
+        id: matrix-arch
+        run: echo "matrix=${{env.BUILD_ARCH}}" >> $GITHUB_OUTPUT
+      - name: Create Matrix Variable (os)
+        id: matrix-os
+        run: echo "matrix=${{env.BUILD_OS}}" >> $GITHUB_OUTPUT
+      - name: Create Matrix Variable (node)
+        id: matrix-node
+        run: echo "matrix=${{env.BUILD_NODE_VERSIONS}}" >> $GITHUB_OUTPUT
+      - name: Create Matrix Variable (pnpm)
+        id: matrix-pnpm
+        run: echo "matrix=${{env.BUILD_PNPM_VERSIONS}}" >> $GITHUB_OUTPUT
+
+  build-images:
+    name: Build Linux Images
+    runs-on: ubuntu-latest
+    needs:
+      - get-version
+      - prepare-matrix
+    if: needs.get-version.outputs.src_version != needs.get-version.outputs.current_version
+    strategy:
+      max-parallel: 2
+      matrix:
+        arch: ${{ fromJSON(needs.prepare-matrix.outputs.matrix-arch) }}
+        os: ${{ fromJSON(needs.prepare-matrix.outputs.matrix-os) }}
+        node: ${{ fromJSON(needs.prepare-matrix.outputs.matrix-node) }}
+        pnpm: ${{ fromJSON(needs.prepare-matrix.outputs.matrix-pnpm) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: v0.9.1
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          build-args: |
+            PLAYWRIGHT_VERSION=${{needs.get-version.outputs.src_version}}
+            NODE_VERSION=${{ matrix.node }}
+            PNPM_VERSION=${{ matrix.pnpm }}
+            OS=${{ matrix.os }}
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ matrix.node }}-pnpm${{ matrix.pnpm }}-${{ matrix.os }}-${{ matrix.arch }}
+  
+  # Publish "ecmchow/node-playwright-pnpm:vX.XX.X-nodeXX-pnpmX-jammy" docker images
+  publish-manfiest-arch:
+    name: Publish Manifest (OS Arch)
+    runs-on: ubuntu-latest
+    needs:
+      - get-version
+      - prepare-matrix
+      - build-images
+    if: needs.get-version.outputs.src_version != needs.get-version.outputs.current_version
+    strategy:
+      max-parallel: 2
+      matrix:
+        os: ${{ fromJSON(needs.prepare-matrix.outputs.matrix-os) }}
+        node: ${{ fromJSON(needs.prepare-matrix.outputs.matrix-node) }}
+        pnpm: ${{ fromJSON(needs.prepare-matrix.outputs.matrix-pnpm) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker Manifest (node${{ matrix.node }}-pnpm${{ matrix.pnpm }})
+        run: |
+          docker manifest create ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ matrix.node }}-pnpm${{ matrix.pnpm }}-${{ matrix.os }} \
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ matrix.node }}-pnpm${{ matrix.pnpm }}-${{ matrix.os }}-amd64 \
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ matrix.node }}-pnpm${{ matrix.pnpm }}-${{ matrix.os }}-arm64
+    
+      - name: Docker Annotate (node${{ matrix.node }}-pnpm${{ matrix.pnpm }})
+        run: |
+          docker manifest annotate --os linux --arch amd64 \
+            ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ matrix.node }}-pnpm${{ matrix.pnpm }}-${{ matrix.os }} ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ matrix.node }}-pnpm${{ matrix.pnpm }}-${{ matrix.os }}-amd64
+         
+          docker manifest annotate --os linux --arch arm64 \
+            ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ matrix.node }}-pnpm${{ matrix.pnpm }}-${{ matrix.os }} ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ matrix.node }}-pnpm${{ matrix.pnpm }}-${{ matrix.os }}-arm64
+    
+      - name: Docker Push (node${{ matrix.node }}-pnpm${{ matrix.pnpm }})
+        run: |
+          docker manifest push ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ matrix.node }}-pnpm${{ matrix.pnpm }}-${{ matrix.os }}
+  
+  # Publish "ecmchow/node-playwright-pnpm:vX.XX.X-jammy" docker images
+  # Publish "ecmchow/node-playwright-pnpm:latest-jammy" docker images
+  publish-manfiest-os:
+    name: Publish Manifest (OS)
+    runs-on: ubuntu-latest
+    needs:
+      - get-version
+      - prepare-matrix
+      - build-images
+    if: needs.get-version.outputs.src_version != needs.get-version.outputs.current_version
+    strategy:
+      max-parallel: 2
+      matrix:
+        os: ${{ fromJSON(needs.prepare-matrix.outputs.matrix-os) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker Manifest (${{ matrix.os }})
+        run: |
+          docker manifest create ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-${{ matrix.os }} \
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-${{ matrix.os }}-amd64 \
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-${{ matrix.os }}-arm64
+    
+      - name: Docker Annotate (${{ matrix.os }})
+        run: |
+          docker manifest annotate --os linux --arch amd64 \
+            ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-${{ matrix.os }} ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-${{ matrix.os }}-amd64
+         
+          docker manifest annotate --os linux --arch arm64 \
+            ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-${{ matrix.os }} ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-${{ matrix.os }}-arm64
+    
+      - name: Docker Push (${{ matrix.os }})
+        run: |
+          docker manifest push ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-${{ matrix.os }}
+
+      - name: Docker Manifest (latest-${{ matrix.os }})
+        run: |
+          docker manifest create ecmchow/node-playwright-pnpm:latest-${{ matrix.os }} \
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-${{ matrix.os }}-amd64 \
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-${{ matrix.os }}-arm64
+    
+      - name: Docker Annotate (latest-${{ matrix.os }})
+        run: |
+          docker manifest annotate --os linux --arch amd64 \
+            ecmchow/node-playwright-pnpm:latest-jammy ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-${{ matrix.os }}-amd64
+        
+          docker manifest annotate --os linux --arch arm64 \
+            ecmchow/node-playwright-pnpm:latest-jammy ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-${{ matrix.os }}-arm64
+    
+      - name: Docker Push (latest-${{ matrix.os }})
+        run: |
+          docker manifest push ecmchow/node-playwright-pnpm:latest-jammy
+
+  # Publish "ecmchow/node-playwright-pnpm:latest" docker images
+  # Publish GitHub release
+  publish-release:
+    name: Publish Manifest
+    runs-on: ubuntu-latest
+    needs:
+      - get-version
+      - publish-manfiest-arch
+      - publish-manfiest-os
+    if: needs.get-version.outputs.src_version != needs.get-version.outputs.current_version
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker Manifest (latest)
+        run: |
+          docker manifest create ecmchow/node-playwright-pnpm:latest \
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-jammy-amd64 \
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-jammy-arm64
+    
+      - name: Docker Annotate (latest)
+        run: |
+          docker manifest annotate --os linux --arch amd64 \
+            ecmchow/node-playwright-pnpm:latest ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-jammy-amd64
+         
+          docker manifest annotate --os linux --arch arm64 \
+            ecmchow/node-playwright-pnpm:latest ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-jammy-arm64
+    
+      - name: Docker Push (latest)
+        run: |
+          docker manifest push ecmchow/node-playwright-pnpm:latest
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{needs.get-version.outputs.src_version}}
