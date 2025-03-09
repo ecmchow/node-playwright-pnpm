@@ -12,7 +12,7 @@ env:
   BUILD_ARCH: "['amd64', 'arm64']"
   BUILD_OS: "['jammy', 'noble']"
   BUILD_NODE_VERSIONS: "[22, 20]"
-  BUILD_PNPM_VERSIONS: "[9, 8]"
+  BUILD_PNPM_VERSIONS: "[10, 9]"
 
 jobs:
   get-version:
