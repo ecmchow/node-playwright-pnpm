@@ -11,7 +11,7 @@ permissions:
 env:
   BUILD_ARCH: "['amd64', 'arm64']"
   BUILD_OS: "['jammy', 'noble']"
-  BUILD_NODE_VERSIONS: "[22, 20]"
+  BUILD_NODE_VERSIONS: "[24, 22, 20]"
   BUILD_PNPM_VERSIONS: "[10, 9]"
 
 jobs:
@@ -249,3 +249,4 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{needs.get-version.outputs.src_version}}
+
