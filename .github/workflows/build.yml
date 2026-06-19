@@ -10,9 +10,9 @@ permissions:
 
 env:
   BUILD_ARCH: "['amd64', 'arm64']"
-  BUILD_OS: "['jammy', 'noble']"
-  BUILD_NODE_VERSIONS: "[24, 22, 20]"
-  BUILD_PNPM_VERSIONS: "[10, 9]"
+  BUILD_OS: "['noble', 'resolute']"
+  BUILD_NODE_VERSIONS: "[26, 24, 22]"
+  BUILD_PNPM_VERSIONS: "[11, 10]"
 
 jobs:
   get-version:
@@ -230,16 +230,16 @@ jobs:
       - name: Docker Manifest (latest)
         run: |
           docker manifest create ecmchow/node-playwright-pnpm:latest \
-            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-noble-amd64 \
-            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-noble-arm64
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-resolute-amd64 \
+            --amend ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-resolute-arm64
     
       - name: Docker Annotate (latest)
         run: |
           docker manifest annotate --os linux --arch amd64 \
-            ecmchow/node-playwright-pnpm:latest ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-noble-amd64
+            ecmchow/node-playwright-pnpm:latest ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-resolute-amd64
          
           docker manifest annotate --os linux --arch arm64 \
-            ecmchow/node-playwright-pnpm:latest ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-noble-arm64
+            ecmchow/node-playwright-pnpm:latest ecmchow/node-playwright-pnpm:${{needs.get-version.outputs.src_version}}-node${{ fromJSON(env.BUILD_NODE_VERSIONS)[0] }}-pnpm${{ fromJSON(env.BUILD_PNPM_VERSIONS)[0] }}-resolute-arm64
     
       - name: Docker Push (latest)
         run: |
